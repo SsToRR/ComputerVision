@@ -1,0 +1,27 @@
+Tasks 6–10 Summary
+
+Device: cpu
+Eval subset size: None
+
+Frozen metrics (subset):
+Accuracy=0.996667, Precision=0.996688, Recall=0.996667, MacroF1=0.996667
+
+Finetune metrics (subset):
+Accuracy=0.999333, Precision=0.999337, Recall=0.999333, MacroF1=0.999332
+
+Selected better model for Task 6/8: finetune
+
+Scratch model metrics (subset):
+Accuracy=0.875667, Precision=0.885616, Recall=0.875667, MacroF1=0.876689
+
+Efficiency:
+Better model trainable params: 11184207
+Scratch trainable params: 95183
+Mean forward time better model (s): 3.287111310008913
+Mean forward time scratch (s): 1.5814207600138617
+
+Saved figures:
+lab_outputs_tasks6_10\task6_confusion_matrix_finetune.png
+lab_outputs_tasks6_10\task6_examples_finetune.png
+lab_outputs_tasks6_10\task8_featuremaps_early_finetune.png
+lab_outputs_tasks6_10\task8_featuremaps_deep_finetune.png

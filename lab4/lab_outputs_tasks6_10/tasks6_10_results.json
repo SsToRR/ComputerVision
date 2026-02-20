@@ -1,0 +1,47 @@
+{
+  "settings": {
+    "device": "cpu",
+    "eval_subset_size": null,
+    "eval_batch_size": 128,
+    "num_classes": 15
+  },
+  "task5_like_metrics_on_eval_subset": {
+    "frozen": {
+      "accuracy": 0.9966666666666667,
+      "macro_precision": 0.9966880456518558,
+      "macro_recall": 0.9966666666666665,
+      "macro_f1": 0.9966674333664068
+    },
+    "finetune": {
+      "accuracy": 0.9993333333333333,
+      "macro_precision": 0.9993366500829187,
+      "macro_recall": 0.9993333333333333,
+      "macro_f1": 0.9993324895466527
+    },
+    "better_model": "finetune",
+    "prediction_time_seconds": 179.47049400000833
+  },
+  "task6_outputs": {
+    "confusion_matrix_image": "lab_outputs_tasks6_10\\task6_confusion_matrix_finetune.png",
+    "six_examples_image": "lab_outputs_tasks6_10\\task6_examples_finetune.png"
+  },
+  "task7_scratch": {
+    "scratch_model_saved": "scratch.pth",
+    "accuracy": 0.8756666666666667,
+    "macro_precision": 0.8856158350895191,
+    "macro_recall": 0.8756666666666667,
+    "macro_f1": 0.876689336953225,
+    "history": null
+  },
+  "task8_outputs": {
+    "early_feature_maps_image": "lab_outputs_tasks6_10\\task8_featuremaps_early_finetune.png",
+    "deep_feature_maps_image": "lab_outputs_tasks6_10\\task8_featuremaps_deep_finetune.png"
+  },
+  "task9_efficiency": {
+    "better_model_name": "finetune",
+    "better_model_trainable_params": 11184207,
+    "scratch_trainable_params": 95183,
+    "mean_forward_time_seconds_better_model": 3.287111310008913,
+    "mean_forward_time_seconds_scratch": 1.5814207600138617
+  }
+}
