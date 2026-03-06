@@ -1,30 +1,30 @@
-import argparse
-import csv
-import json
-import os
-from datetime import datetime
-from pathlib import Path
-from urllib.request import urlretrieve
+import argparse  # for parsing CLI arguments
+import csv  # for reading/writing attendance CSV
+import json  # for JSON utilities (kept for potential future use)
+import os  # for OS-level utilities (kept for potential future use)
+from datetime import datetime  # for timestamps in attendance
+from pathlib import Path  # for robust path handling
+from urllib.request import urlretrieve  # for downloading model files
 
-import cv2
-import numpy as np
+import cv2  # OpenCV for detection and recognition
+import numpy as np  # numerical operations on embeddings
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
-DATA_KNOWN = "data/known"
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}  # supported image formats
+DATA_KNOWN = "data/known"  # default folder for labeled faces
 
-DETECTOR_MODEL = "models/face_detection_yunet_2023mar.onnx"
-RECOGNIZER_MODEL = "models/face_recognition_sface_2021dec.onnx"
-GALLERY_PATH = "models/gallery.npz"
-ATTENDANCE_PATH = "outputs/attendance.csv"
+DETECTOR_MODEL = "models/face_detection_yunet_2023mar.onnx"  # YuNet detector model path
+RECOGNIZER_MODEL = "models/face_recognition_sface_2021dec.onnx"  # SFace recognizer model path
+GALLERY_PATH = "models/gallery.npz"  # saved embeddings + labels
+ATTENDANCE_PATH = "outputs/attendance.csv"  # attendance output CSV
 
-DEFAULT_WIDTH = 1280
-DEFAULT_HEIGHT = 720
-DEFAULT_SCORE = 0.7
-DEFAULT_NMS = 0.3
-DEFAULT_TOPK = 5000
-DEFAULT_COSINE = 0.36
+DEFAULT_WIDTH = 1280  # default input width
+DEFAULT_HEIGHT = 720  # default input height
+DEFAULT_SCORE = 0.7  # detector score threshold
+DEFAULT_NMS = 0.3  # detector NMS threshold
+DEFAULT_TOPK = 5000  # detector top-k candidates
+DEFAULT_COSINE = 0.36  # cosine similarity threshold
 
-DOWNLOADS = {
+DOWNLOADS = {  # model filenames mapped to download URLs
     "face_detection_yunet_2023mar.onnx": [
         "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
         "https://huggingface.co/opencv/opencv_zoo/resolve/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx",
@@ -36,158 +36,158 @@ DOWNLOADS = {
 }
 
 
-def ensure_models(model_dir: str):
-    Path(model_dir).mkdir(parents=True, exist_ok=True)
-    for filename, urls in DOWNLOADS.items():
-        path = Path(model_dir) / filename
-        if path.exists():
-            continue
-        for url in urls:
-            try:
-                print(f"Downloading {filename}...")
-                urlretrieve(url, path)
-                break
-            except Exception:
-                if path.exists():
-                    path.unlink()
-        if not path.exists():
-            raise RuntimeError(f"Failed to download {filename}. Check your connection or URLs.")
+def ensure_models(model_dir: str):  # download missing models if needed
+    Path(model_dir).mkdir(parents=True, exist_ok=True)  # ensure model directory exists
+    for filename, urls in DOWNLOADS.items():  # iterate all required files
+        path = Path(model_dir) / filename  # target file path
+        if path.exists():  # skip if already present
+            continue  # move to next file
+        for url in urls:  # try each mirror
+            try:  # attempt download
+                print(f"Downloading {filename}...")  # user feedback
+                urlretrieve(url, path)  # download to disk
+                break  # stop after successful download
+            except Exception:  # any download error
+                if path.exists():  # remove partial file
+                    path.unlink()  # delete incomplete download
+        if not path.exists():  # if all mirrors failed
+            raise RuntimeError(f"Failed to download {filename}. Check your connection or URLs.")  # fail fast
 
 
-def create_detector(model_path: str, input_size, score_thr: float, nms_thr: float, top_k: int):
-    detector = cv2.FaceDetectorYN.create(
-        model_path,
-        "",
-        input_size,
-        score_thr,
-        nms_thr,
-        top_k,
-    )
-    if detector is None:
-        raise RuntimeError("Failed to create FaceDetectorYN.")
-    return detector
+def create_detector(model_path: str, input_size, score_thr: float, nms_thr: float, top_k: int):  # build YuNet
+    detector = cv2.FaceDetectorYN.create(  # create detector instance
+        model_path,  # path to ONNX model
+        "",  # optional config (unused)
+        input_size,  # input image size
+        score_thr,  # score threshold
+        nms_thr,  # NMS threshold
+        top_k,  # max candidates
+    )  # end create call
+    if detector is None:  # sanity check
+        raise RuntimeError("Failed to create FaceDetectorYN.")  # fail if creation failed
+    return detector  # return detector object
 
 
-def create_recognizer(model_path: str):
-    recognizer = cv2.FaceRecognizerSF.create(model_path, "")
-    if recognizer is None:
-        raise RuntimeError("Failed to create FaceRecognizerSF.")
-    return recognizer
+def create_recognizer(model_path: str):  # build SFace recognizer
+    recognizer = cv2.FaceRecognizerSF.create(model_path, "")  # create recognizer instance
+    if recognizer is None:  # sanity check
+        raise RuntimeError("Failed to create FaceRecognizerSF.")  # fail if creation failed
+    return recognizer  # return recognizer object
 
 
-def detect_faces(detector, frame):
-    h, w = frame.shape[:2]
-    detector.setInputSize((w, h))
-    _, faces = detector.detect(frame)
-    if faces is None or len(faces) == 0:
-        return []
-    return faces
+def detect_faces(detector, frame):  # detect all faces in a frame
+    h, w = frame.shape[:2]  # image height/width
+    detector.setInputSize((w, h))  # set detector input size
+    _, faces = detector.detect(frame)  # run detection
+    if faces is None or len(faces) == 0:  # no detections
+        return []  # return empty list
+    return faces  # return raw face detections
 
 
-def pick_largest_face(faces):
-    if faces is None or len(faces) == 0:
-        return None
-    return max(faces, key=lambda f: f[2] * f[3])
+def pick_largest_face(faces):  # choose the biggest face by area
+    if faces is None or len(faces) == 0:  # handle empty input
+        return None  # nothing to pick
+    return max(faces, key=lambda f: f[2] * f[3])  # select largest box
 
 
-def extract_feature(recognizer, frame, face):
-    aligned = recognizer.alignCrop(frame, face)
-    feature = recognizer.feature(aligned)
-    return feature.astype(np.float32)
+def extract_feature(recognizer, frame, face):  # extract embedding for a face
+    aligned = recognizer.alignCrop(frame, face)  # align and crop face
+    feature = recognizer.feature(aligned)  # compute embedding
+    return feature.astype(np.float32)  # ensure float32
 
 
-def cosine_similarity(query, gallery):
-    query = query.reshape(1, -1)
-    gallery = gallery.reshape(gallery.shape[0], -1)
-    query_norm = np.linalg.norm(query, axis=1, keepdims=True) + 1e-8
-    gallery_norm = np.linalg.norm(gallery, axis=1, keepdims=True) + 1e-8
-    return (query @ gallery.T) / (query_norm * gallery_norm.T)
+def cosine_similarity(query, gallery):  # compute cosine similarity scores
+    query = query.reshape(1, -1)  # ensure 2D query
+    gallery = gallery.reshape(gallery.shape[0], -1)  # flatten gallery
+    query_norm = np.linalg.norm(query, axis=1, keepdims=True) + 1e-8  # avoid div by zero
+    gallery_norm = np.linalg.norm(gallery, axis=1, keepdims=True) + 1e-8  # avoid div by zero
+    return (query @ gallery.T) / (query_norm * gallery_norm.T)  # cosine similarity matrix
 
 
-def ensure_attendance_file(attendance_path: str):
-    path = Path(attendance_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        with path.open("w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["name", "date", "time", "similarity"])
+def ensure_attendance_file(attendance_path: str):  # create CSV if missing
+    path = Path(attendance_path)  # normalize path
+    path.parent.mkdir(parents=True, exist_ok=True)  # ensure parent directory exists
+    if not path.exists():  # only create if absent
+        with path.open("w", newline="", encoding="utf-8") as f:  # open file for write
+            writer = csv.writer(f)  # CSV writer
+            writer.writerow(["name", "date", "time", "similarity"])  # header row
 
 
-def mark_attendance(attendance_path: str, name: str, similarity: float):
-    now = datetime.now()
-    with Path(attendance_path).open("a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow([name, now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), f"{similarity:.3f}"])
+def mark_attendance(attendance_path: str, name: str, similarity: float):  # append an attendance row
+    now = datetime.now()  # current timestamp
+    with Path(attendance_path).open("a", newline="", encoding="utf-8") as f:  # open for append
+        writer = csv.writer(f)  # CSV writer
+        writer.writerow([name, now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), f"{similarity:.3f}"])  # row
 
 
-def build_gallery(known_dir: str, detector, recognizer):
-    known_dir = Path(known_dir)
-    if not known_dir.exists():
-        raise RuntimeError(f"Known directory not found: {known_dir}")
+def build_gallery(known_dir: str, detector, recognizer):  # build embeddings from known faces
+    known_dir = Path(known_dir)  # normalize path
+    if not known_dir.exists():  # validate existence
+        raise RuntimeError(f"Known directory not found: {known_dir}")  # fail if missing
 
-    embeddings = []
-    names = []
+    embeddings = []  # list of face embeddings
+    names = []  # list of corresponding labels
 
-    person_names = sorted([p.name for p in known_dir.iterdir() if p.is_dir()])
-    if not person_names:
-        raise RuntimeError("No subfolders found in data/known. Add at least one person folder.")
+    person_names = sorted([p.name for p in known_dir.iterdir() if p.is_dir()])  # list person dirs
+    if not person_names:  # no people found
+        raise RuntimeError("No subfolders found in data/known. Add at least one person folder.")  # fail
 
-    for name in person_names:
-        person_dir = known_dir / name
-        for file in person_dir.iterdir():
-            if file.suffix.lower() not in IMAGE_EXTS:
-                continue
-            image = cv2.imread(str(file))
-            if image is None:
-                continue
-            faces = detect_faces(detector, image)
-            face = pick_largest_face(faces)
-            if face is None:
-                continue
-            feature = extract_feature(recognizer, image, face)
-            embeddings.append(feature)
-            names.append(name)
+    for name in person_names:  # iterate persons
+        person_dir = known_dir / name  # path to person's images
+        for file in person_dir.iterdir():  # iterate files
+            if file.suffix.lower() not in IMAGE_EXTS:  # skip non-images
+                continue  # go to next file
+            image = cv2.imread(str(file))  # read image
+            if image is None:  # skip unreadable files
+                continue  # go to next file
+            faces = detect_faces(detector, image)  # detect faces
+            face = pick_largest_face(faces)  # choose largest face
+            if face is None:  # no face found
+                continue  # skip image
+            feature = extract_feature(recognizer, image, face)  # compute embedding
+            embeddings.append(feature)  # store embedding
+            names.append(name)  # store label
 
-    if not embeddings:
-        raise RuntimeError("No faces detected in training images. Check lighting and image quality.")
+    if not embeddings:  # if nothing collected
+        raise RuntimeError("No faces detected in training images. Check lighting and image quality.")  # fail
 
-    embeddings = np.vstack(embeddings).astype(np.float32)
-    return embeddings, np.array(names, dtype=object)
-
-
-def save_gallery(path: str, embeddings, names):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, embeddings=embeddings, names=names)
+    embeddings = np.vstack(embeddings).astype(np.float32)  # stack embeddings into array
+    return embeddings, np.array(names, dtype=object)  # return embeddings and labels
 
 
-def load_gallery(path: str):
-    data = np.load(path, allow_pickle=True)
-    return data["embeddings"].astype(np.float32), data["names"]
+def save_gallery(path: str, embeddings, names):  # save gallery to disk
+    Path(path).parent.mkdir(parents=True, exist_ok=True)  # ensure output dir exists
+    np.savez_compressed(path, embeddings=embeddings, names=names)  # save as compressed NPZ
 
 
-def train(known_dir: str, detector_model: str, recognizer_model: str, gallery_path: str, width: int, height: int,
-          score_thr: float, nms_thr: float, top_k: int):
-    ensure_models(Path(detector_model).parent)
-    detector = create_detector(detector_model, (width, height), score_thr, nms_thr, top_k)
-    recognizer = create_recognizer(recognizer_model)
-    embeddings, names = build_gallery(known_dir, detector, recognizer)
-    save_gallery(gallery_path, embeddings, names)
-    print(f"Gallery saved to {gallery_path} with {len(names)} samples")
+def load_gallery(path: str):  # load gallery from disk
+    data = np.load(path, allow_pickle=True)  # load NPZ file
+    return data["embeddings"].astype(np.float32), data["names"]  # return embeddings and names
 
 
-def recognize_faces(frame, detector, recognizer, embeddings, names, cosine_threshold: float):
-    faces = detect_faces(detector, frame)
-    results = []
-    for face in faces:
-        feature = extract_feature(recognizer, frame, face)
-        sims = cosine_similarity(feature, embeddings).flatten()
-        best_idx = int(np.argmax(sims))
-        best_sim = float(sims[best_idx])
-        name = names[best_idx]
-        if best_sim < cosine_threshold:
-            name = "Unknown"
-        results.append((face, name, best_sim))
-    return results
+def train(known_dir: str, detector_model: str, recognizer_model: str, gallery_path: str, width: int, height: int,  # train gallery
+          score_thr: float, nms_thr: float, top_k: int):  # detector parameters
+    ensure_models(Path(detector_model).parent)  # download models if needed
+    detector = create_detector(detector_model, (width, height), score_thr, nms_thr, top_k)  # build detector
+    recognizer = create_recognizer(recognizer_model)  # build recognizer
+    embeddings, names = build_gallery(known_dir, detector, recognizer)  # build embeddings
+    save_gallery(gallery_path, embeddings, names)  # persist gallery
+    print(f"Gallery saved to {gallery_path} with {len(names)} samples")  # user feedback
+
+
+def recognize_faces(frame, detector, recognizer, embeddings, names, cosine_threshold: float):  # recognize all faces
+    faces = detect_faces(detector, frame)  # detect faces
+    results = []  # list of (face, name, similarity)
+    for face in faces:  # process each face
+        feature = extract_feature(recognizer, frame, face)  # get embedding
+        sims = cosine_similarity(feature, embeddings).flatten()  # similarity to gallery
+        best_idx = int(np.argmax(sims))  # best match index
+        best_sim = float(sims[best_idx])  # best similarity score
+        name = names[best_idx]  # predicted label
+        if best_sim < cosine_threshold:  # threshold check
+            name = "Unknown"  # mark as unknown
+        results.append((face, name, best_sim))  # store result
+    return results  # return list of results
 
 
 def run_webcam(
@@ -203,42 +203,42 @@ def run_webcam(
     nms_thr: float,
     top_k: int,
 ):
-    ensure_models(Path(detector_model).parent)
-    embeddings, names = load_gallery(gallery_path)
-    detector = create_detector(detector_model, (width, height), score_thr, nms_thr, top_k)
-    recognizer = create_recognizer(recognizer_model)
-    ensure_attendance_file(attendance_path)
-    present = set()
+    ensure_models(Path(detector_model).parent)  # download models if missing
+    embeddings, names = load_gallery(gallery_path)  # load known faces
+    detector = create_detector(detector_model, (width, height), score_thr, nms_thr, top_k)  # detector
+    recognizer = create_recognizer(recognizer_model)  # recognizer
+    ensure_attendance_file(attendance_path)  # ensure CSV exists
+    present = set()  # keep track of who is already marked
 
-    cap = cv2.VideoCapture(camera_index)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    if not cap.isOpened():
-        raise RuntimeError("Could not open webcam. Try a different --camera index.")
+    cap = cv2.VideoCapture(camera_index)  # open webcam
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)  # set width
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)  # set height
+    if not cap.isOpened():  # check webcam
+        raise RuntimeError("Could not open webcam. Try a different --camera index.")  # fail if not opened
 
-    print("Press 'q' to quit")
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        results = recognize_faces(frame, detector, recognizer, embeddings, names, cosine_threshold)
-        for (face, name, similarity) in results:
-            if name == "Unknown":
-                continue
-            if name not in present:
-                mark_attendance(attendance_path, name, similarity)
-                present.add(name)
-            x, y, w, h = [int(v) for v in face[:4]]
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            label = f"{name} ({similarity:.2f})"
-            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    print("Press 'q' to quit")  # instruction message
+    while True:  # main loop
+        ok, frame = cap.read()  # read a frame
+        if not ok:  # stop if frame read failed
+            break  # exit loop
+        results = recognize_faces(frame, detector, recognizer, embeddings, names, cosine_threshold)  # recognize
+        for (face, name, similarity) in results:  # iterate recognized faces
+            if name == "Unknown":  # skip unknowns
+                continue  # no drawing/attendance
+            if name not in present:  # mark only once per run
+                mark_attendance(attendance_path, name, similarity)  # write to CSV
+                present.add(name)  # remember as present
+            x, y, w, h = [int(v) for v in face[:4]]  # bounding box
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)  # draw box
+            label = f"{name} ({similarity:.2f})"  # label string
+            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)  # draw label
 
-        cv2.imshow("Face Recognition", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+        cv2.imshow("Face Recognition", frame)  # show the frame
+        if cv2.waitKey(1) & 0xFF == ord("q"):  # quit on q
+            break  # exit loop
 
-    cap.release()
-    cv2.destroyAllWindows()
+    cap.release()  # release webcam
+    cv2.destroyAllWindows()  # close windows
 
 
 def run_batch(
@@ -254,124 +254,124 @@ def run_batch(
     nms_thr: float,
     top_k: int,
 ):
-    ensure_models(Path(detector_model).parent)
-    embeddings, names = load_gallery(gallery_path)
-    detector = create_detector(detector_model, (width, height), score_thr, nms_thr, top_k)
-    recognizer = create_recognizer(recognizer_model)
+    ensure_models(Path(detector_model).parent)  # download models if missing
+    embeddings, names = load_gallery(gallery_path)  # load known faces
+    detector = create_detector(detector_model, (width, height), score_thr, nms_thr, top_k)  # detector
+    recognizer = create_recognizer(recognizer_model)  # recognizer
 
-    input_dir = Path(input_dir)
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    input_dir = Path(input_dir)  # normalize input path
+    output_dir = Path(output_dir)  # normalize output path
+    output_dir.mkdir(parents=True, exist_ok=True)  # ensure output dir exists
 
-    image_files = [p for p in input_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS]
-    if not image_files:
-        raise RuntimeError(f"No images found in {input_dir}")
+    image_files = [p for p in input_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS]  # list images
+    if not image_files:  # no images found
+        raise RuntimeError(f"No images found in {input_dir}")  # fail fast
 
-    for file in image_files:
-        image = cv2.imread(str(file))
-        if image is None:
-            continue
-        results = recognize_faces(image, detector, recognizer, embeddings, names, cosine_threshold)
-        for (face, name, similarity) in results:
-            if name == "Unknown":
-                continue
-            x, y, w, h = [int(v) for v in face[:4]]
-            cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            label = f"{name} ({similarity:.2f})"
-            cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        out_path = output_dir / file.name
-        cv2.imwrite(str(out_path), image)
+    for file in image_files:  # process each image
+        image = cv2.imread(str(file))  # read image
+        if image is None:  # skip unreadable
+            continue  # next file
+        results = recognize_faces(image, detector, recognizer, embeddings, names, cosine_threshold)  # recognize
+        for (face, name, similarity) in results:  # iterate results
+            if name == "Unknown":  # skip unknowns
+                continue  # no label for unknown
+            x, y, w, h = [int(v) for v in face[:4]]  # bounding box
+            cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)  # draw box
+            label = f"{name} ({similarity:.2f})"  # label string
+            cv2.putText(image, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)  # draw label
+        out_path = output_dir / file.name  # output file path
+        cv2.imwrite(str(out_path), image)  # save annotated image
 
-    print(f"Processed {len(image_files)} images into {output_dir}")
-
-
-def build_parser():
-    parser = argparse.ArgumentParser(description="Face recognition using OpenCV YuNet + SFace")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    p_train = sub.add_parser("train", help="Build face gallery from data/known")
-    p_train.add_argument("--known", default=DATA_KNOWN)
-    p_train.add_argument("--detector", default=DETECTOR_MODEL)
-    p_train.add_argument("--recognizer", default=RECOGNIZER_MODEL)
-    p_train.add_argument("--gallery", default=GALLERY_PATH)
-    p_train.add_argument("--width", type=int, default=DEFAULT_WIDTH)
-    p_train.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
-    p_train.add_argument("--score", type=float, default=DEFAULT_SCORE)
-    p_train.add_argument("--nms", type=float, default=DEFAULT_NMS)
-    p_train.add_argument("--topk", type=int, default=DEFAULT_TOPK)
-
-    p_webcam = sub.add_parser("webcam", help="Run live webcam recognition")
-    p_webcam.add_argument("--detector", default=DETECTOR_MODEL)
-    p_webcam.add_argument("--recognizer", default=RECOGNIZER_MODEL)
-    p_webcam.add_argument("--gallery", default=GALLERY_PATH)
-    p_webcam.add_argument("--cosine", type=float, default=DEFAULT_COSINE)
-    p_webcam.add_argument("--camera", type=int, default=0)
-    p_webcam.add_argument("--attendance", default=ATTENDANCE_PATH)
-    p_webcam.add_argument("--width", type=int, default=DEFAULT_WIDTH)
-    p_webcam.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
-    p_webcam.add_argument("--score", type=float, default=DEFAULT_SCORE)
-    p_webcam.add_argument("--nms", type=float, default=DEFAULT_NMS)
-    p_webcam.add_argument("--topk", type=int, default=DEFAULT_TOPK)
-
-    p_batch = sub.add_parser("batch", help="Run recognition on a folder of images")
-    p_batch.add_argument("--detector", default=DETECTOR_MODEL)
-    p_batch.add_argument("--recognizer", default=RECOGNIZER_MODEL)
-    p_batch.add_argument("--gallery", default=GALLERY_PATH)
-    p_batch.add_argument("--cosine", type=float, default=DEFAULT_COSINE)
-    p_batch.add_argument("--input", default="data/unknown")
-    p_batch.add_argument("--output", default="outputs")
-    p_batch.add_argument("--width", type=int, default=DEFAULT_WIDTH)
-    p_batch.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
-    p_batch.add_argument("--score", type=float, default=DEFAULT_SCORE)
-    p_batch.add_argument("--nms", type=float, default=DEFAULT_NMS)
-    p_batch.add_argument("--topk", type=int, default=DEFAULT_TOPK)
-
-    return parser
+    print(f"Processed {len(image_files)} images into {output_dir}")  # summary message
 
 
-def main():
-    args = build_parser().parse_args()
-    if args.cmd == "train":
-        train(
-            args.known,
-            args.detector,
-            args.recognizer,
-            args.gallery,
-            args.width,
-            args.height,
-            args.score,
-            args.nms,
-            args.topk,
-        )
-    elif args.cmd == "webcam":
-        run_webcam(
-            args.detector,
-            args.recognizer,
-            args.gallery,
-            args.cosine,
-            args.camera,
-            args.attendance,
-            args.width,
-            args.height,
-            args.score,
-            args.nms,
-            args.topk,
-        )
-    elif args.cmd == "batch":
-        run_batch(
-            args.detector,
-            args.recognizer,
-            args.gallery,
-            args.cosine,
-            args.input,
-            args.output,
-            args.width,
-            args.height,
-            args.score,
-            args.nms,
-            args.topk,
-        )
+def build_parser():  # build CLI argument parser
+    parser = argparse.ArgumentParser(description="Face recognition using OpenCV YuNet + SFace")  # base parser
+    sub = parser.add_subparsers(dest="cmd", required=True)  # subcommands
+
+    p_train = sub.add_parser("train", help="Build face gallery from data/known")  # train subcommand
+    p_train.add_argument("--known", default=DATA_KNOWN)  # known folder
+    p_train.add_argument("--detector", default=DETECTOR_MODEL)  # detector model path
+    p_train.add_argument("--recognizer", default=RECOGNIZER_MODEL)  # recognizer model path
+    p_train.add_argument("--gallery", default=GALLERY_PATH)  # output gallery path
+    p_train.add_argument("--width", type=int, default=DEFAULT_WIDTH)  # input width
+    p_train.add_argument("--height", type=int, default=DEFAULT_HEIGHT)  # input height
+    p_train.add_argument("--score", type=float, default=DEFAULT_SCORE)  # detector score
+    p_train.add_argument("--nms", type=float, default=DEFAULT_NMS)  # detector NMS
+    p_train.add_argument("--topk", type=int, default=DEFAULT_TOPK)  # detector top-k
+
+    p_webcam = sub.add_parser("webcam", help="Run live webcam recognition")  # webcam subcommand
+    p_webcam.add_argument("--detector", default=DETECTOR_MODEL)  # detector model path
+    p_webcam.add_argument("--recognizer", default=RECOGNIZER_MODEL)  # recognizer model path
+    p_webcam.add_argument("--gallery", default=GALLERY_PATH)  # gallery path
+    p_webcam.add_argument("--cosine", type=float, default=DEFAULT_COSINE)  # cosine threshold
+    p_webcam.add_argument("--camera", type=int, default=0)  # webcam index
+    p_webcam.add_argument("--attendance", default=ATTENDANCE_PATH)  # attendance CSV path
+    p_webcam.add_argument("--width", type=int, default=DEFAULT_WIDTH)  # frame width
+    p_webcam.add_argument("--height", type=int, default=DEFAULT_HEIGHT)  # frame height
+    p_webcam.add_argument("--score", type=float, default=DEFAULT_SCORE)  # detector score
+    p_webcam.add_argument("--nms", type=float, default=DEFAULT_NMS)  # detector NMS
+    p_webcam.add_argument("--topk", type=int, default=DEFAULT_TOPK)  # detector top-k
+
+    p_batch = sub.add_parser("batch", help="Run recognition on a folder of images")  # batch subcommand
+    p_batch.add_argument("--detector", default=DETECTOR_MODEL)  # detector model path
+    p_batch.add_argument("--recognizer", default=RECOGNIZER_MODEL)  # recognizer model path
+    p_batch.add_argument("--gallery", default=GALLERY_PATH)  # gallery path
+    p_batch.add_argument("--cosine", type=float, default=DEFAULT_COSINE)  # cosine threshold
+    p_batch.add_argument("--input", default="data/unknown")  # input folder
+    p_batch.add_argument("--output", default="outputs")  # output folder
+    p_batch.add_argument("--width", type=int, default=DEFAULT_WIDTH)  # input width
+    p_batch.add_argument("--height", type=int, default=DEFAULT_HEIGHT)  # input height
+    p_batch.add_argument("--score", type=float, default=DEFAULT_SCORE)  # detector score
+    p_batch.add_argument("--nms", type=float, default=DEFAULT_NMS)  # detector NMS
+    p_batch.add_argument("--topk", type=int, default=DEFAULT_TOPK)  # detector top-k
+
+    return parser  # return configured parser
 
 
-if __name__ == "__main__":
-    main()
+def main():  # CLI entry point
+    args = build_parser().parse_args()  # parse CLI arguments
+    if args.cmd == "train":  # train command
+        train(  # run training
+            args.known,  # known folder
+            args.detector,  # detector model
+            args.recognizer,  # recognizer model
+            args.gallery,  # gallery output path
+            args.width,  # input width
+            args.height,  # input height
+            args.score,  # detector score
+            args.nms,  # detector NMS
+            args.topk,  # detector top-k
+        )  # end train call
+    elif args.cmd == "webcam":  # webcam command
+        run_webcam(  # run webcam recognition
+            args.detector,  # detector model
+            args.recognizer,  # recognizer model
+            args.gallery,  # gallery path
+            args.cosine,  # cosine threshold
+            args.camera,  # camera index
+            args.attendance,  # attendance path
+            args.width,  # frame width
+            args.height,  # frame height
+            args.score,  # detector score
+            args.nms,  # detector NMS
+            args.topk,  # detector top-k
+        )  # end webcam call
+    elif args.cmd == "batch":  # batch command
+        run_batch(  # run batch recognition
+            args.detector,  # detector model
+            args.recognizer,  # recognizer model
+            args.gallery,  # gallery path
+            args.cosine,  # cosine threshold
+            args.input,  # input directory
+            args.output,  # output directory
+            args.width,  # input width
+            args.height,  # input height
+            args.score,  # detector score
+            args.nms,  # detector NMS
+            args.topk,  # detector top-k
+        )  # end batch call
+
+
+if __name__ == "__main__":  # script entry check
+    main()  # run main
