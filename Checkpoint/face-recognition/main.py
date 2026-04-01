@@ -313,19 +313,6 @@ def build_parser():  # build CLI argument parser
     p_webcam.add_argument("--nms", type=float, default=DEFAULT_NMS)  # detector NMS
     p_webcam.add_argument("--topk", type=int, default=DEFAULT_TOPK)  # detector top-k
 
-    p_batch = sub.add_parser("batch", help="Run recognition on a folder of images")  # batch subcommand
-    p_batch.add_argument("--detector", default=DETECTOR_MODEL)  # detector model path
-    p_batch.add_argument("--recognizer", default=RECOGNIZER_MODEL)  # recognizer model path
-    p_batch.add_argument("--gallery", default=GALLERY_PATH)  # gallery path
-    p_batch.add_argument("--cosine", type=float, default=DEFAULT_COSINE)  # cosine threshold
-    p_batch.add_argument("--input", default="data/unknown")  # input folder
-    p_batch.add_argument("--output", default="outputs")  # output folder
-    p_batch.add_argument("--width", type=int, default=DEFAULT_WIDTH)  # input width
-    p_batch.add_argument("--height", type=int, default=DEFAULT_HEIGHT)  # input height
-    p_batch.add_argument("--score", type=float, default=DEFAULT_SCORE)  # detector score
-    p_batch.add_argument("--nms", type=float, default=DEFAULT_NMS)  # detector NMS
-    p_batch.add_argument("--topk", type=int, default=DEFAULT_TOPK)  # detector top-k
-
     return parser  # return configured parser
 
 
@@ -357,21 +344,7 @@ def main():  # CLI entry point
             args.nms,  # detector NMS
             args.topk,  # detector top-k
         )  # end webcam call
-    elif args.cmd == "batch":  # batch command
-        run_batch(  # run batch recognition
-            args.detector,  # detector model
-            args.recognizer,  # recognizer model
-            args.gallery,  # gallery path
-            args.cosine,  # cosine threshold
-            args.input,  # input directory
-            args.output,  # output directory
-            args.width,  # input width
-            args.height,  # input height
-            args.score,  # detector score
-            args.nms,  # detector NMS
-            args.topk,  # detector top-k
-        )  # end batch call
-
+    # batch CLI intentionally removed; run_batch remains available for programmatic use  # keep in script
 
 if __name__ == "__main__":  # script entry check
     main()  # run main

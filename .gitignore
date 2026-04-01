@@ -1,3 +1,15 @@
 .gitignore file:
 lab3/clothes/
 lab3/data/
+lab4/Vegetable Images/
+lab4/finetune.pth
+lab4/frozen.pth
+lab4/scratch.pth
+lab7/annotations/
+lab7/images/
+lab8/venv311/
+lab8/face_lab_dataset/
+lab8/__pycache__/
+Checkpoint/venv/
+venv/
+data/
